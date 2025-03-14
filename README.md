@@ -30,8 +30,8 @@ Ce projet vise à automatiser l'émargement des étudiants de l'Université Bret
    - BLACKLIST=Entrainement Le Robert, Activités HACK2G2, Activités GCC
    ```
 
-   > [!NOTE]
-   > La `blacklist` est une liste de mots-clés permettant d'exclure certains cours de l'émargement automatique. Lors de l'exécution, tout cours dont le nom contient un des mots-clés de la `blacklist` ne sera pas émargé. Il est recommandé de laisser la blacklist comme dans l'exemple ci-dessus.
+> [!NOTE]
+> La `blacklist` est une liste de mots-clés permettant d'exclure certains cours de l'émargement automatique. Lors de l'exécution, tout cours dont le nom contient un des mots-clés de la `blacklist` ne sera pas émargé. Il est recommandé de laisser la blacklist comme dans l'exemple ci-dessus.
 
 3. Modifiez les variables d'environnement dans `secrets.env`
 
@@ -83,8 +83,8 @@ Les notifications sont gérées avec [ntfy.sh](https://ntfy.sh/). C'est très si
 
 2. Appuyez sur le `+` en bas a droite et entrez un *topic*. Cela correspond à une adresse à laquelle vous allez vous "abonner", et l'application utilisera cette adresse pour envoyer des notifications.
 
-   > [!NOTE]
-   > Ces *topics* sont publics, entrez donc une valeur aléatoire pour éviter de recevoir des notifications envoyées par d'autres personnes.
+> [!NOTE]
+> Ces *topics* sont publics, entrez donc une valeur aléatoire pour éviter de recevoir des notifications envoyées par d'autres personnes.
 
 3. Entrer le *topic* que vous avez utilisé dans le fichier `secrets.env`, et relancez le Docker.
 
