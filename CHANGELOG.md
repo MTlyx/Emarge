@@ -1,5 +1,21 @@
 # Changelog
 
+## [v2.4] - 2025-03-14
+
+### Added
+- Support for lessons overlaping regular hours
+- Support for changes in the planning during the day (checks every 15 minutes if lessons changed)
+- Support for Moodle in English
+- Verify if emargement is successful before closing Selenium
+- Notification system using [ntfy.sh](https://ntfy.sh/) to know whether emargement is successful or not
+
+### Changed
+- Uses direct link to the 'Emargement' page after logging in
+- Longer delays between actions when emarging (because why not? might as well give more time to the broswer for loading pages)
+- Moved secrets to dedicated `secrets.env`
+- Emargement is now performed 1 to 7 minutes after the beginning of the lesson (15 to 25 previously)
+- Updated `geckodriver` and pinned Selenium to corresponding version
+
 ## [v2.3] - 2025-03-05
 
 ### Added
