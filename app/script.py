@@ -29,7 +29,7 @@ TOPIC = os.getenv("TOPIC")
 MODE = os.getenv("MODE")
 
 if A == "X" or TP == "X" or FORMATION == "X":
-    print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnements A, TP et FORMATION dans le docker-compose.yml")
+    print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnement A, TP et FORMATION dans le docker-compose.yml")
     time.sleep(5)
     quit()
 
@@ -37,8 +37,7 @@ if MODE == "EMARGEMENT":
     from selenium import webdriver
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import Select
-    from selenium.webdriver.firefox.service import Service
-    from selenium.webdriver.firefox.options import Options
+    from selenium.webdriver.chrome.options import Options
     from selenium.common.exceptions import NoSuchElementException
     from fake_useragent import UserAgent
     from bs4 import BeautifulSoup
@@ -48,10 +47,11 @@ if MODE == "EMARGEMENT":
 
     # Set options for selenium
     options = Options()
-    options.add_argument('-headless')
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
 
     if USERNAME == 'USER' or PASSWORD == 'PASS':
-        print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnements USER et PASS dans le docker-compose.yml")
+        print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnement USER et PASS dans le docker-compose.yml")
         time.sleep(5)
         quit()
 
@@ -202,9 +202,8 @@ def emarge(course_name):
     """
     Perform all the process like a normal student to emerge
     """
-    options.set_preference("general.useragent.override", f"{UserAgent(os='Linux').random}")
-    driver = webdriver.Firefox(options=options)
-
+    options.add_argument(f"--user-agent={UserAgent(os='Linux').random}")
+    driver = webdriver.Chrome(options=options)
     log_print(f"Ouverture du navigateur Selenium pour {course_name}")
 
     driver.get("https://moodle.univ-ubs.fr/")

@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.5] - 2025-05-07
+
+### Fixed
+- Fix firefox crash when opening it
+
 ## [v2.4] - 2025-03-19
     
 ### Added
