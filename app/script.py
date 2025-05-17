@@ -261,6 +261,7 @@ def emarge(course_name):
                 break
     except Exception as e:
         log_print(f"Impossible de trouver le lien d'émargement pour {course_name} : {e}", "warning")
+        driver.close()
         driver.quit()
         quit()
 
@@ -307,11 +308,12 @@ def schedule_random_times():
     for event in events_filtered:
         if MODE == "EMARGEMENT":
             start_hour = (event["start"] + timedelta(minutes=random.randint(5, 10))).strftime("%H:%M")
-            schedule.every().day.at(start_hour).do(lambda event_name=event["name"]: emarge(event_name))
+            event_name = event["name"]
+            schedule.every().day.at(start_hour).do(emarge, event_name)
         elif MODE == "NOTIFICATION":
             start_hour = event["start"].strftime("%H:%M")
-            schedule.every().day.at(start_hour).do(lambda event_name=event["name"]: log_print(f"Il faut émarger pour {event_name}", "update"))
-
+            message = f'Il faut émarger pour {event["name"]}'
+            schedule.every().day.at(start_hour).do(log_print, message, "update")
         times.append(f"{start_hour}")
 
     if times:
