@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 AS emargement
+FROM debian:latest AS emargement
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
@@ -28,7 +28,7 @@ WORKDIR /app
 
 COPY app/requirements* ./
 
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-selenium.txt
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-selenium.txt --break-system-packages
 
 COPY app/* ./
 

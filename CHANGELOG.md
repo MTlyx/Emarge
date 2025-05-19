@@ -4,6 +4,7 @@
 
 ### Fixed
 - Fix firefox crash when opening it
+- Fix schedule on ubuntu
 
 ## [v2.4] - 2025-03-19
     
