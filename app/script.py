@@ -106,10 +106,10 @@ def get_latest_releases_name():
     """
     url = f"https://api.github.com/repos/MTlyx/Emarge/releases/latest"
     response = requests.get(url)
-    
+
     if response.status_code == 200:
         return response.json()["name"]
-    
+
     log_print("Error fetching latest releases")
     return None
 
@@ -118,7 +118,7 @@ def check_for_updates(LAST_RELEASE_NAME):
     Check if the git repo is up to date
     """
     latest_name = get_latest_releases_name()
-    
+
     if latest_name:
         if latest_name != LAST_RELEASE_NAME:
             log_print(f"La nouvelle mise à jour {latest_name} est disponible sur github", "update")
@@ -157,6 +157,45 @@ def send_notification(message):
     """
     if TOPIC is not None and TOPIC != "XXXXXXXXXXX":
         requests.post(f"https://ntfy.sh/{TOPIC}", data=message.encode())
+
+def ensure_minimum_gap(events, min_gap_minutes=15):
+    """
+    Ensure there's a minimum gap between events (min_gap_minutes).
+    If an event starts too soon after the previous one, adjust its start/end times.
+    """
+    if not events:
+        return []
+    
+    # Sort events by start time
+    sorted_events = sorted(events, key=lambda x: x["start"])
+    
+    result = [sorted_events[0]]  # Add first event directly
+    
+    for event in sorted_events[1:]:
+        last_event = result[-1]
+        min_start_time = last_event["end"] + timedelta(minutes=min_gap_minutes)
+        
+        # If the event starts before the minimum allowed time
+        if event["start"] < min_start_time:
+            # Calculate event duration
+            event_duration = (event["end"] - event["start"]).total_seconds() / 60
+            
+            # Adjust the start time
+            new_start = min_start_time
+            # Adjust the end time to maintain the same duration
+            new_end = new_start + timedelta(minutes=event_duration)
+            
+            # Create adjusted event
+            adjusted_event = event.copy()
+            adjusted_event["start"] = new_start
+            adjusted_event["end"] = new_end
+            
+            result.append(adjusted_event)
+        else:
+            # Event already has sufficient gap, add it as is
+            result.append(event)
+    
+    return result
 
 def filter_events(events):
     """
@@ -301,7 +340,7 @@ def schedule_random_times():
         return
 
     # Get from the API all the courses of the student for today
-    events_today = hours_Emarge()
+    events_today = ensure_minimum_gap(hours_Emarge())
     events_filtered = filter_events(events_today)
 
     # Add a timedelta
