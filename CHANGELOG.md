@@ -2,12 +2,15 @@
 
 ## [v2.5] - 2025-05-07
 
+### Added
+- Set a minimum gap between event of 15min to emarge on time
+
 ### Fixed
 - Fix firefox crash when opening it
 - Fix schedule on ubuntu
 
 ## [v2.4] - 2025-03-19
-    
+
 ### Added
 - The possibility to have a notification on your phone with ntfy when you emerge
 - The possibility to only get notification on your phone
