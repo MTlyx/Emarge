@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.7] - 2026-01-20
+
+### Fixed
+- Fix the planning sup api
+
 ## [v2.6] - 2025-10-01
 
 ### Added

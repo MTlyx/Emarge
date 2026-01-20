@@ -1,4 +1,4 @@
-# 🎓 Automatisation de l'émargement v2.6
+# 🎓 Automatisation de l'émargement v2.7
 
 Ce projet vise à automatiser l'émargement des étudiants de l'Université Bretagne Sud, en particulier ceux de l'ENSIBS. En utilisant Selenium dans un conteneur Docker, il enregistre automatiquement leur présence en cours, évitant ainsi toute retenue sur leur salaire. Son fonctionnement : chaque jour de la semaine, il récupère les cours de l'étudiant via l'API de PlanningSup et vérifie s'il y a une mise à jour. Au début de chaque cours, il émarge automatiquement entre 5 et 10 minutes après le début du cours. De plus, il est possible de recevoir une notification sur son téléphone pour être informé des nouvelles mises à jour, des émargements réussis ainsi que des possibles erreurs.
 

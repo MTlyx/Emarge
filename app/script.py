@@ -78,17 +78,25 @@ if FORMATION not in {"cyberdefense", "cyberdata", "cyberlog"}:
     time.sleep(5)
     quit()
 
-API_URL = "https://planningsup.app/api/v1/calendars"
+API_URL = "https://planningsup.app/api/plannings"
+PLANNING_IDS = []
 if A == "3":
     S = 5
-    URL_PLANNING =  f"{API_URL}?p=ensibs.{FORMATION}.{A}emeannee.semestre{S}s{S}.tp{TP}"
-    URL_PLANNING += f",ensibs.{FORMATION}.{A}emeannee.semestre{S+1}s{S+1}.tp{TP}"
+    PLANNING_IDS = [
+        f"ensibs.{FORMATION}.{A}emeannee.semestre{S}s{S}.tp{TP}",
+        f"ensibs.{FORMATION}.{A}emeannee.semestre{S+1}s{S+1}.tp{TP}",
+    ]
 elif A == "4":
     S = 7
-    URL_PLANNING =  f"{API_URL}?p=ensibs.{FORMATION}.{A}emeannee.semestre{S}s{S}.tp{TP}"
-    URL_PLANNING += f",ensibs.{FORMATION}.{A}emeannee.semestre{S+1}s{S+1}.tp{TP}"
+    PLANNING_IDS = [
+        f"ensibs.{FORMATION}.{A}emeannee.semestre{S}s{S}.tp{TP}",
+        f"ensibs.{FORMATION}.{A}emeannee.semestre{S+1}s{S+1}.tp{TP}",
+    ]
 elif A == "5":
-    URL_PLANNING =  f"{API_URL}?p=ensibs.{FORMATION}.{A}emeannee.tp{TP}"
+    if FORMATION == "cyberdata":
+        PLANNING_IDS = [f"ensibs.{FORMATION}.{A}emeannee.semestre9s9.tp{TP}"]
+    else:
+        PLANNING_IDS = [f"ensibs.{FORMATION}.{A}emeannee.tp{TP}"]
 else:
     print(f"[{RED}-{RESET}] Votre ANNEE doit être 3, 4 ou 5")
     time.sleep(5)
@@ -254,32 +262,97 @@ def filter_events(events):
             filtered_events.append(event)
     return filtered_events
 
+def parse_planningsup_datetime(value):
+    """
+    Parse PlanningSup timestamps (ISO or ms) and convert to Paris timezone.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value / 1000, tz=PARIS_TZ)
+    if not isinstance(value, str):
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return PARIS_TZ.localize(parsed)
+    return parsed.astimezone(PARIS_TZ)
+
+def fetch_planning_events(planning_id):
+    """
+    Fetch events for a planning from the PlanningSup API.
+    """
+    url = f"{API_URL}/{planning_id}"
+    try:
+        response = requests.get(
+            url,
+            params={"events": "true"},
+            headers={"Accept-Encoding": "gzip, deflate"},
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        logging.error(f"Erreur API PlanningSup pour {planning_id} : {exc}")
+        return None
+
+    if response.status_code != 200:
+        logging.error(f"Erreur API PlanningSup pour {planning_id} : HTTP {response.status_code}")
+        return None
+
+    try:
+        data = response.json()
+    except json.decoder.JSONDecodeError:
+        logging.error(f"Réponse invalide de l'API PlanningSup pour {planning_id}")
+        return None
+
+    if not isinstance(data, dict) or "events" not in data:
+        logging.error(f"Réponse incomplète de l'API PlanningSup pour {planning_id}")
+        return None
+
+    return data.get("events", [])
+
 def hours_Emarge():
     """
     From the API, get each courses and their starting hours for today
     """
-    response = requests.get(URL_PLANNING)
-    try:
-        data = response.json()
-    except json.decoder.JSONDecodeError:
-        logging.error("Impossible de récupérer les données de l'API, vérifiez votre ANNEE, SEMESTRE et TP")
-        print(f"[{RED}-{RESET}] Impossible de récupérer les données de l'API, vérifiez votre ANNEE, SEMESTRE et TP")
+    now = datetime.now(PARIS_TZ)
+    today_str = now.strftime("%Y-%m-%d")
+    events = []
+    successful_plannings = 0
+    failed_plannings = []
+
+    for planning_id in PLANNING_IDS:
+        planning_events = fetch_planning_events(planning_id)
+        if planning_events is None:
+            failed_plannings.append(planning_id)
+            continue
+        successful_plannings += 1
+
+        for event in planning_events:
+            name = event.get("summary") or event.get("name") or event.get("title")
+            start_dt = parse_planningsup_datetime(event.get("startDate") or event.get("start"))
+            end_dt = parse_planningsup_datetime(event.get("endDate") or event.get("end"))
+
+            if not name or not start_dt or not end_dt:
+                continue
+            if start_dt.strftime("%Y-%m-%d") != today_str:
+                continue
+            if start_dt + timedelta(minutes=15) <= now:
+                continue
+            if not 8 <= start_dt.hour <= 18:
+                continue
+
+            events.append({"name": name, "start": start_dt, "end": end_dt})
+
+    if successful_plannings == 0:
+        logging.error("Impossible de récupérer les données de l'API PlanningSup, vérifiez votre ANNEE, FORMATION et TP")
+        print(f"[{RED}-{RESET}] Impossible de récupérer les données de l'API PlanningSup, vérifiez votre ANNEE, FORMATION et TP")
         quit()
 
-    today_str = datetime.now(PARIS_TZ).strftime("%Y-%m-%d")
-    # Extract relevant fields and convert timestamps
-    events = [
-        {
-            "name": event["name"],
-            "start": datetime.fromtimestamp(event["start"] / 1000, tz=PARIS_TZ),
-            "end": datetime.fromtimestamp(event["end"] / 1000, tz=PARIS_TZ),
-        }
-        for planning in data.get("plannings", [])
-        for event in planning.get("events", [])
-        if (datetime.fromtimestamp(event["start"] / 1000, tz=PARIS_TZ)).strftime("%Y-%m-%d") == today_str
-        and (datetime.fromtimestamp(event["start"] / 1000, tz=PARIS_TZ)) + timedelta(minutes=15) > datetime.now(PARIS_TZ)
-        and 8 <= (datetime.fromtimestamp(event["start"] / 1000, tz=PARIS_TZ)).hour <= 18
-    ]
+    if failed_plannings:
+        logging.warning(f"Plannings inaccessibles: {', '.join(failed_plannings)}")
 
     # Return the list of events of today
     return events
