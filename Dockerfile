@@ -23,7 +23,9 @@ RUN echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key
 RUN apt-get update && apt-get install -y google-chrome-stable && rm -rf /var/lib/apt/lists/*
 
 RUN CHROME_VERSION="$(google-chrome --product-version)" && \
-    wget -q --continue -P /tmp/ "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" && \
+    CHROME_MAJOR_VERSION="${CHROME_VERSION%%.*}" && \
+    DRIVER_VERSION="$(curl -fsSL "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_MAJOR_VERSION}")" && \
+    wget -q -P /tmp/ "https://storage.googleapis.com/chrome-for-testing-public/${DRIVER_VERSION}/linux64/chromedriver-linux64.zip" && \
     unzip -q /tmp/chromedriver-linux64.zip -d /tmp/ && \
     mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && \
     chmod +x /usr/local/bin/chromedriver && \
