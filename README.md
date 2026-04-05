@@ -1,4 +1,4 @@
-# 🎓 Automatisation de l'émargement v2.7
+# 🎓 Automatisation de l'émargement v2.8
 
 Ce projet vise à automatiser l'émargement des étudiants de l'Université Bretagne Sud, en particulier ceux de l'ENSIBS. En utilisant Selenium dans un conteneur Docker, il enregistre automatiquement leur présence en cours, évitant ainsi toute retenue sur leur salaire. Son fonctionnement : chaque jour de la semaine, il récupère les cours de l'étudiant via l'API de PlanningSup et vérifie s'il y a une mise à jour. Au début de chaque cours, il émarge automatiquement entre 5 et 10 minutes après le début du cours. De plus, il est possible de recevoir une notification sur son téléphone pour être informé des nouvelles mises à jour, des émargements réussis ainsi que des possibles erreurs.
 
@@ -23,6 +23,7 @@ Les variables à modifier sont les suivantes :
 - `Pa` : Votre mot de passe UBS
 - `blacklist` : Liste de mots-clés pour exclure certains cours de l'émargement
 - `TOPIC` : Votre topic nfty est à configurer [ici](#-notification) (Il sert a recevoir des notifications sur votre téléphone)
+- `RECAP` : `oui` pour recevoir un récapitulatif hebdomadaire des émargements manquants ou non validés via ntfy, sinon `non`
 
 Exemple de configuration d'un cyberdefense en 3eme année dans le TP 1
 ```yaml
@@ -33,6 +34,7 @@ Exemple de configuration d'un cyberdefense en 3eme année dans le TP 1
 - Pa=MonSuperMotDePasse
 - blacklist=Entrainement Le Robert, Activités HACK2G2, Activités GCC, Séminaire Facteur Humain
 - TOPIC=XXXXXXXXXXX
+- RECAP=oui
 ```
 
 > [!NOTE]

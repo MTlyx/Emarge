@@ -15,5 +15,6 @@ services:
       - Pa=PASS
       - blacklist=Entrainement Le Robert, Activités HACK2G2, Activités GCC, Séminaire Facteur Humain
       - TOPIC=XXXXXXXXXXX
+      - RECAP=oui #non
       - TZ=Europe/Paris
     restart: unless-stopped

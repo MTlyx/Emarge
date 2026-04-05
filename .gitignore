@@ -1,2 +1,5 @@
 app/emargement.log
 app/ntfy
+.codex
+__pycache__/
+app/__pycache__/
