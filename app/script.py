@@ -9,6 +9,7 @@ import datetime
 import random
 import requests
 import json
+import re
 from datetime import datetime, timedelta
 
 # Set the timezone and allowed days
@@ -20,6 +21,16 @@ RED = "\033[31m"
 BLUE = "\033[34m"
 RESET = "\033[0m"
 
+TIME_SLOTS = [
+    ("08:00", "09:30"),
+    ("09:45", "11:15"),
+    ("11:30", "13:00"),
+    ("13:00", "14:30"),
+    ("14:45", "16:15"),
+    ("16:30", "18:00"),
+    ("18:15", "19:45"),
+]
+
 # Set variable with env from docker-compose
 FORMATION = os.getenv("FORMATION")
 A = os.getenv("ANNEE")
@@ -27,6 +38,7 @@ TP = os.getenv("TP")
 blacklist = os.getenv("blacklist")
 TOPIC = os.getenv("TOPIC")
 MODE = os.getenv("MODE")
+RECAP = (os.getenv("RECAP") or "non").strip().lower()
 
 if A == "X" or TP == "X" or FORMATION == "X":
     print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnement A, TP et FORMATION dans le docker-compose.yml")
@@ -46,26 +58,28 @@ if MODE == "EMARGEMENT":
     USERNAME = os.getenv("Us")
     PASSWORD = os.getenv("Pa")
 
-    # Set options for selenium
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument('--lang=fr-FR')
-
     service = Service("/usr/local/bin/chromedriver")
 
-    if USERNAME == 'USER' or PASSWORD == 'PASS':
+    if USERNAME in {None, "USER"} or PASSWORD in {None, "PASS"}:
         print(f"[{RED}-{RESET}] Vous devez d'abord définir les variables d'environnement USER et PASS dans le docker-compose.yml")
         time.sleep(5)
         quit()
 
 elif MODE == "NOTIFICATION":
-    if TOPIC is None and TOPIC == "XXXXXXXXXXX":
+    if TOPIC is None or TOPIC == "XXXXXXXXXXX":
         print(f"[{RED}-{RESET}] Utiliser le mode notification sans renseigner de topic est inutile")
         time.sleep(5)
         quit()
+
+if RECAP not in {"oui", "non"}:
+    print(f"[{RED}-{RESET}] La variable d'environnement RECAP doit être définie sur 'oui' ou 'non'")
+    time.sleep(5)
+    quit()
+
+if RECAP == "oui" and MODE != "EMARGEMENT":
+    print(f"[{RED}-{RESET}] Le RECAP nécessite l'image emargement car il utilise Selenium")
+    time.sleep(5)
+    quit()
 
 TP = int(TP)
 if not 1 <= TP <= 6:
@@ -180,17 +194,6 @@ def ensure_minimum_gap(events):
     if not events:
         return []
 
-    # Define the predefined time slots
-    TIME_SLOTS = [
-        ("08:00", "09:30"),
-        ("09:45", "11:15"),
-        ("11:30", "13:00"),
-        ("13:00", "14:30"),
-        ("14:45", "16:15"),
-        ("16:30", "18:00"),
-        ("18:15", "19:45")
-    ]
-
     # Sort events by start time
     sorted_events = sorted(events, key=lambda x: x["start"])
 
@@ -225,7 +228,8 @@ def ensure_minimum_gap(events):
 
         # Create emargement events for each overlapping slot that hasn't been used
         for slot_index in overlapping_slots:
-            if slot_index not in used_slots:
+            slot_key = (event_start.date(), slot_index)
+            if slot_key not in used_slots:
                 slot_start, slot_end = TIME_SLOTS[slot_index]
 
                 # Create new event for this slot
@@ -248,7 +252,7 @@ def ensure_minimum_gap(events):
                 emarge_event["end"] = slot_end_dt
 
                 result.append(emarge_event)
-                used_slots.add(slot_index)
+                used_slots.add(slot_key)
 
     return result
 
@@ -280,6 +284,20 @@ def parse_planningsup_datetime(value):
     if parsed.tzinfo is None:
         return PARIS_TZ.localize(parsed)
     return parsed.astimezone(PARIS_TZ)
+
+
+def normalize_planning_event(event):
+    """
+    Convert a PlanningSup event payload into the internal event shape.
+    """
+    name = event.get("summary") or event.get("name") or event.get("title")
+    start_dt = parse_planningsup_datetime(event.get("startDate") or event.get("start"))
+    end_dt = parse_planningsup_datetime(event.get("endDate") or event.get("end"))
+
+    if not name or not start_dt or not end_dt:
+        return None
+
+    return {"name": name, "start": start_dt, "end": end_dt}
 
 def fetch_planning_events(planning_id):
     """
@@ -313,12 +331,11 @@ def fetch_planning_events(planning_id):
 
     return data.get("events", [])
 
-def hours_Emarge():
+
+def collect_planning_events(event_filter):
     """
-    From the API, get each courses and their starting hours for today
+    Load PlanningSup events for all configured plannings and keep matching events.
     """
-    now = datetime.now(PARIS_TZ)
-    today_str = now.strftime("%Y-%m-%d")
     events = []
     successful_plannings = 0
     failed_plannings = []
@@ -328,23 +345,14 @@ def hours_Emarge():
         if planning_events is None:
             failed_plannings.append(planning_id)
             continue
+
         successful_plannings += 1
 
-        for event in planning_events:
-            name = event.get("summary") or event.get("name") or event.get("title")
-            start_dt = parse_planningsup_datetime(event.get("startDate") or event.get("start"))
-            end_dt = parse_planningsup_datetime(event.get("endDate") or event.get("end"))
-
-            if not name or not start_dt or not end_dt:
+        for raw_event in planning_events:
+            event = normalize_planning_event(raw_event)
+            if event is None or not event_filter(event):
                 continue
-            if start_dt.strftime("%Y-%m-%d") != today_str:
-                continue
-            if start_dt + timedelta(minutes=15) <= now:
-                continue
-            if not 8 <= start_dt.hour <= 18:
-                continue
-
-            events.append({"name": name, "start": start_dt, "end": end_dt})
+            events.append(event)
 
     if successful_plannings == 0:
         logging.error("Impossible de récupérer les données de l'API PlanningSup, vérifiez votre ANNEE, FORMATION et TP")
@@ -354,21 +362,60 @@ def hours_Emarge():
     if failed_plannings:
         logging.warning(f"Plannings inaccessibles: {', '.join(failed_plannings)}")
 
-    # Return the list of events of today
     return events
 
-def emarge(course_name):
-    """
-    Perform all the process like a normal student to emerge
-    """
-    options.add_argument(f"--user-agent={UserAgent(os='Linux').random}")
-    driver = webdriver.Chrome(service=service, options=options)
-    log_print(f"Ouverture du navigateur Selenium pour {course_name}")
 
+def current_week_bounds(reference_time=None):
+    """
+    Return Monday and Friday dates for the current Paris week.
+    """
+    current_time = reference_time or datetime.now(PARIS_TZ)
+    week_start = current_time.date() - timedelta(days=current_time.weekday())
+    week_end = week_start + timedelta(days=4)
+    return week_start, week_end
+
+
+def hours_week():
+    """
+    Get all PlanningSup events for the current week that would require emargement.
+    """
+    week_start, week_end = current_week_bounds()
+
+    return collect_planning_events(
+        lambda event: (
+            week_start <= event["start"].date() <= week_end
+            and 8 <= event["start"].hour <= 18
+        )
+    )
+
+
+def build_driver(use_random_user_agent=False):
+    """
+    Build a configured Chrome webdriver instance.
+    """
+    driver_options = Options()
+    driver_options.add_argument("--headless")
+    driver_options.add_argument("--no-sandbox")
+    driver_options.add_argument("--disable-dev-shm-usage")
+    driver_options.add_argument("--window-size=1920,1080")
+    driver_options.add_argument("--lang=fr-FR")
+
+    if use_random_user_agent:
+        try:
+            driver_options.add_argument(f"--user-agent={UserAgent(os='Linux').random}")
+        except Exception:
+            logging.warning("Impossible de générer un user-agent aléatoire, utilisation du user-agent par défaut")
+
+    return webdriver.Chrome(service=service, options=driver_options)
+
+
+def open_presence_page(driver, context_label):
+    """
+    Log in to Moodle and open the attendance activity page.
+    """
     driver.get("https://moodle.univ-ubs.fr/")
     time.sleep(10)
 
-    # Select UBS on the mir
     select_element = driver.find_element(By.ID, "idp")
     dropdown = Select(select_element)
     dropdown.select_by_visible_text("Université Bretagne Sud - UBS")
@@ -376,7 +423,6 @@ def emarge(course_name):
     select_button.click()
     time.sleep(10)
 
-    # Enter USERNAME / PASSWORD and submit them
     username_input = driver.find_element(By.ID, "username")
     username_input.send_keys(USERNAME)
     password_input = driver.find_element(By.ID, "password")
@@ -384,67 +430,229 @@ def emarge(course_name):
     login_button = driver.find_element(By.XPATH, "//button[@type='submit' and contains(@class, 'btn-primary')]")
     login_button.click()
 
-    # Check if the mir accepted our credentials
     try:
         driver.find_element(By.ID, "loginErrorsPanel")
-        log_print(f"Identifiant ou mot de passe incorrect", "warning")
-        driver.quit()
-        quit()
+        raise RuntimeError("Identifiant ou mot de passe incorrect")
     except NoSuchElementException:
         logging.info("Connexion réussie")
     time.sleep(10)
 
-    # Click on the first result that contains "ENSIBS : Émargement"
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    target_span = soup.find("span", class_="sr-only", string="ENSIBS : Émargement")
+    course_link = target_span.find_next("a") if target_span else None
+    if course_link is None or not course_link.get("href"):
+        raise RuntimeError(f"Impossible de trouver le lien ENSIBS : Émargement pour {context_label}")
+
+    driver.get(course_link.get("href"))
+    time.sleep(10)
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    for div in soup.find_all("div", class_="activityname"):
+        if "Présence" in div.get_text(" ", strip=True):
+            link = div.find("a")
+            if link and link.get("href"):
+                driver.get(link.get("href"))
+                time.sleep(5)
+                return link.get("href")
+
+    raise RuntimeError(f"Impossible de trouver le lien de présence pour {context_label}")
+
+
+def parse_moodle_date_range(date_str):
+    """
+    Parse Moodle attendance rows like '6.04.26 (lun.) 08:00 - 09:30'.
+    """
+    match = re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{2}).*?(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})", date_str)
+    if not match:
+        return None, None
+
+    day, month, year, start_time, end_time = match.groups()
+    year = int(f"20{year}")
+
+    start = PARIS_TZ.localize(datetime.strptime(f"{year}-{int(month):02d}-{int(day):02d} {start_time}", "%Y-%m-%d %H:%M"))
+    end = PARIS_TZ.localize(datetime.strptime(f"{year}-{int(month):02d}-{int(day):02d} {end_time}", "%Y-%m-%d %H:%M"))
+
+    return start, end
+
+
+def attendance_is_validated(status_text, points_text):
+    """
+    Return True when Moodle marks an attendance session as covered.
+    """
+    normalized_status = status_text.strip().lower()
+    if normalized_status in {"", "?", "absent"}:
+        return False
+
+    points_match = re.search(r"(\d+)\s*/\s*(\d+)", points_text)
+    if points_match:
+        scored, total = map(int, points_match.groups())
+        return total > 0 and scored > 0
+
+    return True
+
+
+def recup_emargement():
+    """
+    Retrieve validated Moodle attendance sessions for the current week.
+    """
+    driver = build_driver()
+    week_start, week_end = current_week_bounds()
+    log_print("Ouverture du navigateur Selenium pour récupérer les émargements")
+
     try:
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        target_span = soup.find('span', class_='sr-only', string='ENSIBS : Émargement')
-        link = target_span.find_next('a')
-        href = link.get('href')
-        driver.get(href)
+        attendance_url = open_presence_page(driver, "le récapitulatif d'émargement")
+        driver.get(f"{attendance_url}&view=4")
         time.sleep(10)
 
-    except Exception as e:
-        log_print(f"Impossible de trouver le lien d'émargement pour {course_name} : {e}", "warning")
-        driver.quit()
-        quit()
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        table = soup.find("table", class_="generaltable attwidth boxaligncenter")
+        if table is None:
+            raise RuntimeError("tableau des sessions passées introuvable")
 
-    # Click on the Présence link on the bottom of the page
-    try:
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        activity_divs = soup.find_all('div', class_='activityname')
-        for div in activity_divs:
-            if "Présence" in div.text:
-                link = div.find('a')['href']
-                driver.get(link)
-                time.sleep(5)
-                break
-    except Exception as e:
-        log_print(f"Impossible de trouver le lien d'émargement pour {course_name} : {e}", "warning")
-        driver.close()
-        driver.quit()
-        quit()
+        validated_sessions = []
+        for row in table.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 4:
+                continue
 
-    # Click on Envoyer le statut de présence or Submit attendance in english
+            date_text = cells[0].get_text(" ", strip=True)
+            status_text = cells[2].get_text(" ", strip=True)
+            points_text = cells[3].get_text(" ", strip=True)
+            start, end = parse_moodle_date_range(date_text)
+
+            if start is None or end is None:
+                continue
+            if not week_start <= start.date() <= week_end:
+                continue
+            if not attendance_is_validated(status_text, points_text):
+                continue
+
+            validated_sessions.append({
+                "start": start,
+                "end": end,
+                "status": status_text,
+                "points": points_text,
+                "raw_row": row.get_text(" ", strip=True),
+            })
+
+        return validated_sessions
+    finally:
+        driver.quit()
+        time.sleep(2)
+
+
+def event_overlaps(left_event, right_event):
+    """
+    Return True when two timezone-aware event intervals overlap.
+    """
+    return left_event["start"] < right_event["end"] and left_event["end"] > right_event["start"]
+
+
+def find_missing_attendances(expected_slots, validated_sessions):
+    """
+    Return planned emargement slots that are not covered by a validated Moodle session.
+    """
+    missing_slots = []
+
+    for slot in expected_slots:
+        if any(event_overlaps(slot, session) for session in validated_sessions):
+            continue
+        missing_slots.append(slot)
+
+    return missing_slots
+
+
+def check_forget_attendance():
+    """
+    Build and send the weekly recap notification.
+    """
+    if RECAP != "oui":
+        return
+
     try:
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        link = soup.find('a', string='Envoyer le statut de présence')
-        href = link.get('href')
-        driver.get(href)
-        time.sleep(5)
-        log_print(f"Emargement réussi pour {course_name}", "success")
-    except:
+        weekly_slots = filter_events(ensure_minimum_gap(hours_week()))
+        validated_sessions = recup_emargement()
+    except Exception as exc:
+        log_print(f"Impossible de générer le récapitulatif d'émargement : {exc}", "warning")
+        return
+
+    missing_slots = find_missing_attendances(weekly_slots, validated_sessions)
+    week_start, week_end = current_week_bounds()
+    logging.info(
+        "RECAP: %d créneaux planning, %d sessions Moodle validées, %d manquants",
+        len(weekly_slots),
+        len(validated_sessions),
+        len(missing_slots),
+    )
+
+    if missing_slots:
+        lines = [
+            f"Recap emargement du {week_start.strftime('%d/%m/%Y')} au {week_end.strftime('%d/%m/%Y')}",
+            "Emargements manquants ou non valides :",
+        ]
+        for slot in sorted(missing_slots, key=lambda event: event["start"]):
+            lines.append(
+                f"- {slot['name']} le {slot['start'].strftime('%d/%m/%Y')} "
+                f"de {slot['start'].strftime('%H:%M')} a {slot['end'].strftime('%H:%M')}"
+            )
+        message = "\n".join(lines)
+    else:
+        message = (
+            f"Recap emargement du {week_start.strftime('%d/%m/%Y')} au "
+            f"{week_end.strftime('%d/%m/%Y')} : aucun oubli detecte."
+        )
+
+    send_notification(message)
+    log_print(message)
+
+def hours_Emarge():
+    """
+    From the API, get each courses and their starting hours for today
+    """
+    now = datetime.now(PARIS_TZ)
+    today_str = now.strftime("%Y-%m-%d")
+    return collect_planning_events(
+        lambda event: (
+            event["start"].strftime("%Y-%m-%d") == today_str
+            and event["start"] + timedelta(minutes=15) > now
+            and 8 <= event["start"].hour <= 18
+        )
+    )
+
+def emarge(course_name):
+    """
+    Perform all the process like a normal student to emerge
+    """
+    driver = build_driver(use_random_user_agent=True)
+    log_print(f"Ouverture du navigateur Selenium pour {course_name}")
+
+    try:
+        open_presence_page(driver, course_name)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
         try:
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            link = soup.find('a', string='Submit attendance')
-            href = link.get('href')
-            driver.get(href)
+            link = soup.find("a", string="Envoyer le statut de présence")
+            if link is None:
+                raise RuntimeError("lien français introuvable")
+            driver.get(link.get("href"))
             time.sleep(5)
             log_print(f"Emargement réussi pour {course_name}", "success")
-        except:
-            log_print(f"Impossible d'émarger pour {course_name}", "warning")
-
-    driver.quit()
-    time.sleep(2)
+        except Exception:
+            try:
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                link = soup.find("a", string="Submit attendance")
+                if link is None:
+                    raise RuntimeError("lien anglais introuvable")
+                driver.get(link.get("href"))
+                time.sleep(5)
+                log_print(f"Emargement réussi pour {course_name}", "success")
+            except Exception:
+                log_print(f"Impossible d'émarger pour {course_name}", "warning")
+    except Exception as exc:
+        log_print(f"Impossible d'émarger pour {course_name} : {exc}", "warning")
+    finally:
+        driver.quit()
+        time.sleep(2)
 
 def schedule_random_times():
     """ 
@@ -454,6 +662,9 @@ def schedule_random_times():
     schedule.clear()
     schedule.every().day.at("07:00").do(schedule_random_times)
     times = []
+
+    if RECAP == "oui" and datetime.now(PARIS_TZ).weekday() == 4:
+        schedule.every().day.at("20:00").do(check_forget_attendance)
 
     # Check if current day is weekend (5 = Saturday, 6 = Sunday)
     if datetime.now(PARIS_TZ).weekday() >= 5:
