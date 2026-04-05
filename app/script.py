@@ -31,6 +31,9 @@ TIME_SLOTS = [
     ("18:15", "19:45"),
 ]
 
+NTFY_MARKER_FILE = "ntfy"
+BOT_NOTIFICATION_TITLE = "Emarge Bot"
+
 # Set variable with env from docker-compose
 FORMATION = os.getenv("FORMATION")
 A = os.getenv("ANNEE")
@@ -128,6 +131,12 @@ logging.basicConfig(
     filemode='a'
 )
 
+PENDING_EMARGEMENTS = []
+STOP_NEXT_DATE = None
+STOP_DAY_DATE = None
+NTFY_CURSOR = None
+PROCESSED_NTFY_EVENT_IDS = []
+
 def get_latest_releases_name():
     """
     Fetch the latest releases from the GitHub repo
@@ -179,12 +188,303 @@ def log_print(message, warning="info"):
 # Set the last github commit hash
 LAST_RELEASE_NAME = get_latest_releases_name()
 
-def send_notification(message):
+def ntfy_is_enabled():
+    """
+    Return True when the topic is configured.
+    """
+    return TOPIC is not None and TOPIC != "XXXXXXXXXXX"
+
+
+def send_notification(message, title=BOT_NOTIFICATION_TITLE):
     """
     Send a notification with ntfy.sh if the TOPIC is set
     """
-    if TOPIC is not None and TOPIC != "XXXXXXXXXXX":
-        requests.post(f"https://ntfy.sh/{TOPIC}", data=message.encode())
+    if not ntfy_is_enabled():
+        return
+
+    headers = {"Title": title}
+
+    try:
+        requests.post(
+            f"https://ntfy.sh/{TOPIC}",
+            data=message.encode(),
+            headers=headers,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        logging.error(f"Impossible d'envoyer la notification ntfy : {exc}")
+
+
+def send_command_notification(message):
+    """
+    Log and send a response for an inbound ntfy command.
+    """
+    log_print(message)
+    send_notification(message)
+
+
+def remember_ntfy_event(event_id):
+    """
+    Keep a short history of processed ntfy event IDs to avoid duplicates.
+    """
+    if not event_id or event_id in PROCESSED_NTFY_EVENT_IDS:
+        return
+
+    PROCESSED_NTFY_EVENT_IDS.append(event_id)
+    if len(PROCESSED_NTFY_EVENT_IDS) > 200:
+        PROCESSED_NTFY_EVENT_IDS.pop(0)
+
+
+def reset_daily_controls(reference_time=None):
+    """
+    Drop one-day command flags once the Paris date changes.
+    """
+    global STOP_NEXT_DATE, STOP_DAY_DATE
+
+    current_time = reference_time or datetime.now(PARIS_TZ)
+    today = current_time.date()
+
+    if STOP_NEXT_DATE is not None and STOP_NEXT_DATE != today:
+        STOP_NEXT_DATE = None
+    if STOP_DAY_DATE is not None and STOP_DAY_DATE != today:
+        STOP_DAY_DATE = None
+
+
+def is_day_stopped(reference_time=None):
+    """
+    Return True when /stop d has been requested for the current day.
+    """
+    current_time = reference_time or datetime.now(PARIS_TZ)
+    return STOP_DAY_DATE == current_time.date()
+
+
+def has_pending_stop_next(reference_time=None):
+    """
+    Return True when /stop 1 should skip the next emargement today.
+    """
+    current_time = reference_time or datetime.now(PARIS_TZ)
+    return STOP_NEXT_DATE == current_time.date()
+
+
+def cancel_emargement_entry(entry):
+    """
+    Cancel a tracked emargement job.
+    """
+    job = entry.get("job")
+    if job is not None:
+        schedule.cancel_job(job)
+    entry["job"] = None
+    entry["cancelled"] = True
+
+
+def upcoming_emargements(reference_time=None):
+    """
+    Return all remaining tracked emargements for today.
+    """
+    current_time = reference_time or datetime.now(PARIS_TZ)
+    today = current_time.date()
+
+    return sorted(
+        [
+            entry for entry in PENDING_EMARGEMENTS
+            if entry["scheduled_for"].date() == today
+            and not entry["cancelled"]
+            and not entry["executed"]
+        ],
+        key=lambda entry: entry["scheduled_for"],
+    )
+
+
+def format_emargement_entry(entry):
+    """
+    Format a tracked emargement for notifications.
+    """
+    return f"- {entry['scheduled_for'].strftime('%H:%M')} : {entry['name']}"
+
+
+def list_emargements():
+    """
+    Send the remaining emargements for the day through ntfy.
+    """
+    now = datetime.now(PARIS_TZ)
+    reset_daily_controls(now)
+
+    entries = upcoming_emargements(now)
+    if entries:
+        lines = [f"Emargements prevus pour le {now.strftime('%d/%m/%Y')} :"]
+        lines.extend(format_emargement_entry(entry) for entry in entries)
+        send_command_notification("\n".join(lines))
+        return
+
+    if is_day_stopped(now):
+        send_command_notification(
+            f"Aucun emargement restant : l'arret manuel est actif pour le {now.strftime('%d/%m/%Y')}."
+        )
+        return
+
+    send_command_notification("Aucun emargement prevu pour le reste de la journee.")
+
+
+def stop_next_emargement():
+    """
+    Cancel the next remaining emargement, or remember the request for today's first one.
+    """
+    global STOP_NEXT_DATE
+
+    now = datetime.now(PARIS_TZ)
+    reset_daily_controls(now)
+
+    if is_day_stopped(now):
+        send_command_notification(
+            f"Impossible d'utiliser /stop 1 : l'arret manuel est deja actif pour le {now.strftime('%d/%m/%Y')}."
+        )
+        return
+
+    entries = upcoming_emargements(now)
+    if entries:
+        next_entry = entries[0]
+        cancel_emargement_entry(next_entry)
+        send_command_notification(
+            f"Le prochain emargement a {next_entry['scheduled_for'].strftime('%H:%M')} pour "
+            f"{next_entry['name']} a ete annule."
+        )
+        return
+
+    STOP_NEXT_DATE = now.date()
+    send_command_notification("Le prochain emargement programme aujourd'hui sera annule.")
+
+
+def stop_day_emargements():
+    """
+    Cancel every remaining emargement for today.
+    """
+    global STOP_DAY_DATE, STOP_NEXT_DATE
+
+    now = datetime.now(PARIS_TZ)
+    reset_daily_controls(now)
+
+    if is_day_stopped(now):
+        send_command_notification(
+            f"L'arret manuel est deja actif pour le {now.strftime('%d/%m/%Y')}."
+        )
+        return
+
+    STOP_DAY_DATE = now.date()
+    STOP_NEXT_DATE = None
+
+    cancelled_count = 0
+    for entry in upcoming_emargements(now):
+        cancel_emargement_entry(entry)
+        cancelled_count += 1
+
+    if cancelled_count:
+        send_command_notification(
+            f"Arret manuel active pour aujourd'hui : {cancelled_count} emargement(s) restant(s) ont ete annule(s)."
+        )
+        return
+
+    send_command_notification("Arret manuel active pour aujourd'hui. Aucun emargement restant a annuler.")
+
+
+def handle_ntfy_command(message):
+    """
+    Execute supported ntfy commands.
+    """
+    normalized_message = re.sub(r"\s+", " ", message.strip().lower())
+
+    if normalized_message == "/list":
+        list_emargements()
+        return
+    if normalized_message == "/stop 1":
+        stop_next_emargement()
+        return
+    if normalized_message == "/stop d":
+        stop_day_emargements()
+
+
+def fetch_ntfy_events(since_value):
+    """
+    Poll the ntfy JSON endpoint and return parsed events.
+    """
+    if not ntfy_is_enabled():
+        return []
+
+    try:
+        response = requests.get(
+            f"https://ntfy.sh/{TOPIC}/json",
+            params={"poll": "1", "since": since_value},
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logging.error(f"Impossible de lire les commandes ntfy : {exc}")
+        return []
+
+    events = []
+    for line in response.text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            logging.warning(f"Evenement ntfy invalide ignore : {line}")
+
+    return events
+
+
+def initialize_ntfy_cursor():
+    """
+    Skip old cached ntfy messages when the bot starts.
+    """
+    global NTFY_CURSOR
+
+    if not ntfy_is_enabled() or NTFY_CURSOR is not None:
+        return
+
+    latest_events = fetch_ntfy_events("latest")
+    if latest_events:
+        latest_event = latest_events[-1]
+        latest_event_id = latest_event.get("id")
+        if latest_event_id:
+            remember_ntfy_event(latest_event_id)
+            NTFY_CURSOR = latest_event_id
+            return
+
+    NTFY_CURSOR = str(int(time.time()))
+
+
+def check_ntfy_commands():
+    """
+    Poll the configured ntfy topic for inbound commands.
+    """
+    global NTFY_CURSOR
+
+    if not ntfy_is_enabled():
+        return
+
+    reset_daily_controls()
+    initialize_ntfy_cursor()
+
+    for event in fetch_ntfy_events(NTFY_CURSOR):
+        event_id = event.get("id")
+        if event_id:
+            NTFY_CURSOR = event_id
+
+        if event_id in PROCESSED_NTFY_EVENT_IDS:
+            continue
+
+        remember_ntfy_event(event_id)
+
+        if event.get("event") != "message":
+            continue
+        if event.get("title") == BOT_NOTIFICATION_TITLE:
+            continue
+
+        message = event.get("message", "")
+        if not message:
+            continue
+
+        handle_ntfy_command(message)
 
 def ensure_minimum_gap(events):
     """
@@ -654,37 +954,86 @@ def emarge(course_name):
         driver.quit()
         time.sleep(2)
 
+def run_tracked_emargement(entry):
+    """
+    Execute a one-shot scheduled emargement entry.
+    """
+    entry["executed"] = True
+    entry["job"] = None
+
+    if MODE == "EMARGEMENT":
+        emarge(entry["name"])
+    elif MODE == "NOTIFICATION":
+        log_print(f"Il faut émarger pour {entry['name']}", "update")
+
+    return schedule.CancelJob
+
+
+def schedule_tracked_emargement(event, scheduled_for):
+    """
+    Register a tracked one-shot emargement in the schedule.
+    """
+    entry = {
+        "name": event["name"],
+        "course_start": event["start"],
+        "scheduled_for": scheduled_for,
+        "job": None,
+        "cancelled": False,
+        "executed": False,
+    }
+
+    entry["job"] = schedule.every().day.at(scheduled_for.strftime("%H:%M")).do(run_tracked_emargement, entry)
+    PENDING_EMARGEMENTS.append(entry)
+    return entry
+
 def schedule_random_times():
     """ 
     Set a date to emarge for each events of today.
     """
+    global PENDING_EMARGEMENTS, STOP_NEXT_DATE
+
+    now = datetime.now(PARIS_TZ)
+    reset_daily_controls(now)
     check_for_updates(LAST_RELEASE_NAME)
     schedule.clear()
     schedule.every().day.at("07:00").do(schedule_random_times)
+    PENDING_EMARGEMENTS = []
     times = []
 
-    if RECAP == "oui" and datetime.now(PARIS_TZ).weekday() == 4:
+    if RECAP == "oui" and now.weekday() == 4:
         schedule.every().day.at("20:00").do(check_forget_attendance)
 
     # Check if current day is weekend (5 = Saturday, 6 = Sunday)
-    if datetime.now(PARIS_TZ).weekday() >= 5:
+    if now.weekday() >= 5:
         return
 
     # Get from the API all the courses of the student for today
     events_today = ensure_minimum_gap(hours_Emarge())
-    events_filtered = filter_events(events_today)
+    events_filtered = sorted(filter_events(events_today), key=lambda event: event["start"])
+
+    if is_day_stopped(now):
+        log_print("Arret manuel actif : aucun emargement ne sera programme aujourd'hui")
+        return
 
     # Add a timedelta
     for event in events_filtered:
         if MODE == "EMARGEMENT":
-            start_hour = (event["start"] + timedelta(minutes=random.randint(5, 10))).strftime("%H:%M")
-            event_name = event["name"]
-            schedule.every().day.at(start_hour).do(emarge, event_name)
+            scheduled_for = event["start"] + timedelta(minutes=random.randint(5, 10))
         elif MODE == "NOTIFICATION":
-            start_hour = event["start"].strftime("%H:%M")
-            message = f'Il faut émarger pour {event["name"]}'
-            schedule.every().day.at(start_hour).do(log_print, message, "update")
-        times.append(f"{start_hour}")
+            scheduled_for = event["start"]
+        else:
+            continue
+
+        if has_pending_stop_next(scheduled_for):
+            STOP_NEXT_DATE = None
+            log_print(
+                f"Le prochain emargement a {scheduled_for.strftime('%H:%M')} pour {event['name']} "
+                "a ete ignore suite a /stop 1"
+            )
+            continue
+
+        schedule_tracked_emargement(event, scheduled_for)
+        times.append(scheduled_for.strftime("%H:%M"))
 
     if times:
         times.sort()
@@ -696,17 +1045,19 @@ def main():
     """
     Start the script the Emarge bot
     """
-    if not os.path.exists("ntfy"):
+    if not os.path.exists(NTFY_MARKER_FILE):
         log_print(f"Démarrage du programme d'émargement...", "first")
-        with open("ntfy", "w") as f:
+        with open(NTFY_MARKER_FILE, "w") as f:
             pass
 
     schedule_random_times()
+    initialize_ntfy_cursor()
 
-    # While loop to check every minute if it's the time to emarge
+    # While loop to check for ntfy commands and pending emargements
     while True:
+        check_ntfy_commands()
         schedule.run_pending()
-        time.sleep(60)
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
