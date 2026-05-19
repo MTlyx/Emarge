@@ -5,10 +5,12 @@
 ### Added
 - Weekly `RECAP` support with ntfy notifications for missing or non-validated attendance slots
 - Moodle attendance scraping from past sessions to compare planned courses against validated attendance
+- ntfy inbound commands for `/list`, `/stop 1` and `/stop d`
 
 ### Changed
 - Reworked Selenium login/navigation code to share the same Moodle access flow between emargement and recap
 - Extended attendance matching so covered Moodle statuses like `Excusé` are handled by the recap
+- Daily emargements are now tracked as one-shot scheduled jobs so they can be listed or cancelled remotely
 
 ### Fixed
 - Fixed topic validation in notification mode

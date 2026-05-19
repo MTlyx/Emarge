@@ -58,6 +58,14 @@ Les notifications sont gérées avec [ntfy.sh](https://ntfy.sh/), son utilisati
 
 Merci à [@Eudaeon](https://github.com/Eudaeon) pour l'idée
 
+Le meme topic `ntfy` peut aussi etre utilise pour piloter le bot a distance. Envoyez simplement un message sur ce topic avec l'une des commandes suivantes :
+
+- `/list` : renvoie sur `ntfy` la liste des emargements encore prevus pour la journee
+- `/stop 1` : annule le prochain emargement prevu et confirme l'action sur `ntfy`
+- `/stop d` : annule tous les emargements restants de la journee et confirme l'action sur `ntfy`
+
+Les reponses du bot sont publiees sur le meme topic, il est donc recommande d'utiliser un topic aleatoire que vous etes seul a connaitre.
+
 ---
 
 Il est aussi possible de passer le programme en mode notification seulement et il n'émargera pas à votre place
