@@ -180,7 +180,7 @@ def log_print(message, warning="info"):
         send_notification(f"✅ {message} à {current_time}")
     elif warning == "first":
         print(f"[{GREEN}*{RESET}] {message}")
-        send_notification(f"⭐ Le programme d'émargement c'est bien lancé pour la premiere fois avec ntfy à {current_time} en mode {MODE}")
+        send_notification(f"⭐ Le programme d'émargement s'est bien lancé pour la premiere fois avec ntfy à {current_time} en mode {MODE}")
     elif warning == "update":
         print(f"[{BLUE}+{RESET}] {message}")
         send_notification(f"🆕 {message}")
