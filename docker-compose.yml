@@ -13,7 +13,7 @@ services:
       - TP=X
       - Us=USER
       - Pa=PASS
-      - blacklist=Entrainement Le Robert, Activités HACK2G2, Activités GCC, Séminaire Facteur Humain
+      - blacklist=Entrainement Le Robert, Activités HACK2G2, Activités GCC, Séminaire Facteur Humain, SFH, TOEIC
       - TOPIC=XXXXXXXXXXX
       - RECAP=oui #non
       - TZ=Europe/Paris
